@@ -3,12 +3,10 @@ use windows::{
     core::Interface,
     Win32::{
         Media::Audio::{
-            eMultimedia, eRender, eCapture, Endpoints::IAudioEndpointVolume, IAudioSessionControl,
-            IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDevice,
-            IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator,
+            eCapture, eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IAudioSessionControl, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDevice, IMMDeviceCollection, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator, DEVICE_STATE_ACTIVE
         },
         System::{
-            Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CLSCTX_ALL, COINIT_APARTMENTTHREADED},
+            Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED},
             ProcessStatus::K32GetProcessImageFileNameA,
             Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
         },
@@ -44,7 +42,7 @@ impl AudioController {
             eprintln!("ERROR: Couldn't initialize windows connection: {err}");
             error!("ERROR: Couldn't initialize windows connection: {}", err);
             exit(1);
-        });
+    });
 
         Self {
             default_device: None,
@@ -53,6 +51,7 @@ impl AudioController {
             sessions: vec![],
         }
     }
+
     pub unsafe fn GetSessions(&mut self) {
         self.imm_device_enumerator = Some(
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_INPROC_SERVER).unwrap_or_else(
@@ -63,6 +62,131 @@ impl AudioController {
                 },
             ),
         );
+    }
+
+
+    pub unsafe fn GetAllProcessSessions(&mut self) {
+        // Initialize COM library
+        // if let Err(err) = CoInitializeEx(Some(std::ptr::null_mut()), COINIT_MULTITHREADED) {
+        //     eprintln!("ERROR: Failed to initialize COM library... {err}");
+        //     return;
+        // }
+    
+        // Get the device enumerator
+        let device_enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_INPROC_SERVER).unwrap_or_else(|err| {
+            eprintln!("ERROR: Couldn't create device enumerator... {err}");
+            error!("ERROR: Couldn't create device enumerator... {}", err);
+            exit(1);
+        });
+    
+        // Get all audio output devices
+        let device_collection: IMMDeviceCollection = device_enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).unwrap_or_else(|err| {
+            eprintln!("ERROR: Couldn't enumerate audio endpoints... {err}");
+            error!("ERROR: Couldn't enumerate audio endpoints... {}", err);
+            exit(1);
+        });
+    
+        let device_count = device_collection.GetCount().unwrap_or_else(|err| {
+            eprintln!("ERROR: Couldn't get device count... {err}");
+            error!("ERROR: Couldn't get device count... {}", err);
+            exit(1);
+        });
+    
+        for device_index in 0..device_count {
+            let device: IMMDevice = device_collection.Item(device_index).unwrap_or_else(|err| {
+                eprintln!("ERROR: Couldn't get device at index {device_index}... {err}");
+                error!("ERROR: Couldn't get device at index {}... {}", device_index, err);
+                exit(1);
+            });
+
+            println!("Device {}, {:?}", device_index, device);
+    
+            let session_manager2: IAudioSessionManager2 = device.Activate(CLSCTX_INPROC_SERVER, None).unwrap_or_else(|err| {
+                eprintln!("ERROR: Couldn't get AudioSessionManager for enumerating over processes... {err}");
+                error!("ERROR: Couldn't get AudioSessionManager for enumerating over processes... {}", err);
+                exit(1);
+            });
+    
+            let session_enumerator: IAudioSessionEnumerator = session_manager2.GetSessionEnumerator().unwrap_or_else(|err| {
+                eprintln!("ERROR: Couldn't get session enumerator... {err}");
+                error!("ERROR: Couldn't get session enumerator... {}", err);
+                exit(1);
+            });
+    
+            println!("Session count: {}", session_enumerator.GetCount().unwrap());
+    
+            for i in 0..session_enumerator.GetCount().unwrap() {
+                let normal_session_control: Option<IAudioSessionControl> = session_enumerator.GetSession(i).ok();
+                if normal_session_control.is_none() {
+                    eprintln!("ERROR: Couldn't get session control of audio session...");
+                    error!("ERROR: Couldn't get session control of audio session...");
+                    continue;
+                }
+    
+                let session_control: Option<IAudioSessionControl2> = normal_session_control.unwrap().cast().ok();
+                if session_control.is_none() {
+                    eprintln!("ERROR: Couldn't convert from normal session control to session control 2");
+                    error!("ERROR: Couldn't convert from normal session control to session control 2");
+                    continue;
+                }
+    
+                let pid = session_control.as_ref().unwrap().GetProcessId().unwrap();
+                if pid == 0 {
+                    continue;
+                }
+                let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok();
+                if process.is_none() {
+                    eprintln!("ERROR: Couldn't get process information of process id {pid}");
+                    error!("ERROR: Couldn't get process information of process id {}", pid);
+                    continue;
+                }
+                let mut filename: [u8; 128] = [0; 128];
+                K32GetProcessImageFileNameA(process, &mut filename);
+                let mut new_filename: Vec<u8> = vec![];
+                for i in filename.iter() {
+                    if i == &(0 as u8) {
+                        continue;
+                    }
+                    new_filename.push(i.clone());
+                }
+                let mut str_filename = match String::from_utf8(new_filename) {
+                    Ok(data) => data,
+                    Err(err) => {
+                        eprintln!("ERROR: Filename couldn't be converted to string, {err}");
+                        error!("ERROR: Filename couldn't be converted to string, {}", err);
+                        continue;
+                    }
+                };
+                str_filename = match str_filename.split("\\").last() {
+                    Some(data) => data.to_string().replace(".exe", ""),
+                    None => {
+                        continue;
+                    }
+                };
+                let audio_control: ISimpleAudioVolume = match session_control.unwrap().cast() {
+                    Ok(data) => data,
+                    Err(err) => {
+                        eprintln!("ERROR: Couldn't get the simpleaudiovolume from session controller: {err}");
+                        error!("ERROR: Couldn't get the simpleaudiovolume from session controller: {}", err);
+                        continue;
+                    }
+                };
+                // Loop through all sessions and check if the session name already exists, if it does, change name to name + 1
+                let mut name = str_filename;
+                let mut counter = 2;
+                while self.sessions.iter().any(|i| i.getName() == name) {
+                    name = format!("{}({})", name, counter);
+                    counter += 1;
+                }
+    
+                let application_session = ApplicationSession::new(audio_control, name);
+    
+                self.sessions.push(Box::new(application_session));
+            }
+        }
+    
+        // Uninitialize COM
+        CoUninitialize();
     }
 
     pub unsafe fn GetDefaultAudioEnpointVolumeControl(&mut self) {
@@ -134,103 +258,6 @@ impl AudioController {
 
     }
 
-    pub unsafe fn GetAllProcessSessions(&mut self) {
-        if self.default_device.is_none() {
-            eprintln!("ERROR: Default device hasn't been initialized so the cant find the audio processes...");
-            return;
-        }
-
-        let session_manager2: IAudioSessionManager2 = self.default_device.as_ref().unwrap().Activate(CLSCTX_INPROC_SERVER, None).unwrap_or_else(|err| {
-            eprintln!("ERROR: Couldnt get AudioSessionManager for enumerating over processes... {err}");
-            error!("ERROR: Couldnt get AudioSessionManager for enumerating over processes... {}", err);
-            exit(1);
-        });
-
-        let session_enumerator: IAudioSessionEnumerator = session_manager2
-            .GetSessionEnumerator()
-            .unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldnt get session enumerator... {err}");
-                error!("ERROR: Couldnt get session enumerator... {}", err);
-                exit(1);
-            });
-
-        for i in 0..session_enumerator.GetCount().unwrap() {
-            let normal_session_control: Option<IAudioSessionControl> =
-                session_enumerator.GetSession(i).ok();
-            if normal_session_control.is_none() {
-                eprintln!("ERROR: Couldn't get session control of audio session...");
-                error!("ERROR: Couldn't get session control of audio session...");
-                continue;
-            }
-
-            let session_control: Option<IAudioSessionControl2> =
-                normal_session_control.unwrap().cast().ok();
-            if session_control.is_none() {
-                eprintln!(
-                    "ERROR: Couldn't convert from normal session control to session control 2"
-                );
-                error!("ERROR: Couldn't convert from normal session control to session control 2");
-                continue;
-            }
-
-            let pid = session_control.as_ref().unwrap().GetProcessId().unwrap();
-            if pid == 0 {
-                continue;
-            }
-            let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok();
-            if process.is_none() {
-                eprintln!("ERROR: Couldn't get process information of process id {pid}");
-                error!("ERROR: Couldn't get process information of process id {}", pid);
-                continue;
-            }
-            let mut filename: [u8; 128] = [0; 128];
-            K32GetProcessImageFileNameA(process, &mut filename);
-            let mut new_filename: Vec<u8> = vec![];
-            for i in filename.iter() {
-                if i == &(0 as u8) {
-                    continue;
-                }
-                new_filename.push(i.clone());
-            }
-            let mut str_filename = match String::from_utf8(new_filename) {
-                Ok(data) => data,
-                Err(err) => {
-                    eprintln!("ERROR: Filename couldn't be converted to string, {err}");
-                    error!("ERROR: Filename couldn't be converted to string, {}", err);
-                    continue;
-                }
-            };
-            str_filename = match str_filename.split("\\").last() {
-                Some(data) => data.to_string().replace(".exe", ""),
-                None => {
-                    continue;
-                }
-            };
-            let audio_control: ISimpleAudioVolume = match session_control.unwrap().cast() {
-                Ok(data) => data,
-                Err(err) => {
-                    eprintln!(
-                        "ERROR: Couldn't get the simpleaudiovolume from session controller: {err}"
-                    );
-                    error!(
-                        "ERROR: Couldn't get the simpleaudiovolume from session controller: {}",
-                        err);
-                    continue;
-                }
-            };
-            //loop through all sessions and check if the session name already exists, if it does, change name to name + 1
-            let mut name = str_filename;
-            let mut counter = 2;
-            while self.sessions.iter().any(|i| i.getName() == name) {
-                name = format!("{}({})", name, counter);
-                counter += 1;
-            }
-
-            let application_session = ApplicationSession::new(audio_control, name);
-
-            self.sessions.push(Box::new(application_session));
-        }
-    }
 
     pub unsafe fn get_all_session_names(&self) -> Vec<String> {
         self.sessions.iter().map(|i| i.getName()).collect()
