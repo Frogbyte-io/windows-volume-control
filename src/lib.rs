@@ -163,6 +163,9 @@ impl AudioController {
                         continue;
                     }
                 };
+
+                println!("Filename: {}, Audio Endpoint: {:?}", str_filename, device_enumerator);
+
                 let audio_control: ISimpleAudioVolume = match session_control.unwrap().cast() {
                     Ok(data) => data,
                     Err(err) => {
