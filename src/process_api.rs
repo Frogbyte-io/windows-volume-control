@@ -26,8 +26,6 @@ struct LangCodePage {
     pub w_code_page: u16,
 }
 
-pub struct WindowsPlatformApi {}
-
 fn get_process_path(process_id: u32) -> Result<PathBuf, ()> {
     let process_handle = get_process_handle(process_id)?;
     let mut lpdw_size: u32 = MAX_PATH;

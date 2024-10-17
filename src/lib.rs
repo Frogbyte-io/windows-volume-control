@@ -101,8 +101,6 @@ impl AudioController {
                 error!("ERROR: Couldn't get device at index {}... {}", device_index, err);
                 exit(1);
             });
-
-            println!("Device {}, {:?}", device_index, device);
     
             let session_manager2: IAudioSessionManager2 = device.Activate(CLSCTX_INPROC_SERVER, None).unwrap_or_else(|err| {
                 eprintln!("ERROR: Couldn't get AudioSessionManager for enumerating over processes... {err}");
@@ -115,9 +113,7 @@ impl AudioController {
                 error!("ERROR: Couldn't get session enumerator... {}", err);
                 exit(1);
             });
-    
-            println!("Session count: {}", session_enumerator.GetCount().unwrap());
-    
+        
             for i in 0..session_enumerator.GetCount().unwrap() {
                 let normal_session_control: Option<IAudioSessionControl> = session_enumerator.GetSession(i).ok();
                 if normal_session_control.is_none() {
@@ -138,46 +134,18 @@ impl AudioController {
                     continue;
                 }
 
-                match get_process_info(pid) {
-                    Ok(info) => println!("Process info: {:?}", info),
+               let session_app_name = match get_process_info(pid) {
+                    Ok(info) => {
+                        info.process_name.clone()
+                    },
                     Err(_err) => {
                         eprintln!("ERROR: Couldn't get process info for pid {}", pid);
                         error!("ERROR: Couldn't get process info for pid {}", pid);
                         continue;
                     }
-                }
-
-                let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok();
-                if process.is_none() {
-                    eprintln!("ERROR: Couldn't get process information of process id {pid}");
-                    error!("ERROR: Couldn't get process information of process id {}", pid);
-                    continue;
-                }
-                let mut filename: [u8; 128] = [0; 128];
-                K32GetProcessImageFileNameA(process, &mut filename);
-                let mut new_filename: Vec<u8> = vec![];
-                for i in filename.iter() {
-                    if i == &(0 as u8) {
-                        continue;
-                    }
-                    new_filename.push(i.clone());
-                }
-                let mut str_filename = match String::from_utf8(new_filename) {
-                    Ok(data) => data,
-                    Err(err) => {
-                        eprintln!("ERROR: Filename couldn't be converted to string, {err}");
-                        error!("ERROR: Filename couldn't be converted to string, {}", err);
-                        continue;
-                    }
-                };
-                str_filename = match str_filename.split("\\").last() {
-                    Some(data) => data.to_string().replace(".exe", ""),
-                    None => {
-                        continue;
-                    }
                 };
 
-                println!("Filename: {}, Audio Endpoint: {:?}", str_filename, device_enumerator);
+
 
                 let audio_control: ISimpleAudioVolume = match session_control.unwrap().cast() {
                     Ok(data) => data,
@@ -188,7 +156,7 @@ impl AudioController {
                     }
                 };
                 // Loop through all sessions and check if the session name already exists, if it does, change name to name + 1
-                let mut name = str_filename;
+                let mut name = session_app_name;
                 let mut counter = 2;
                 while self.sessions.iter().any(|i| i.getName() == name) {
                     name = format!("{}({})", name, counter);
