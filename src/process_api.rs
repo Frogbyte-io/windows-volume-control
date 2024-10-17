@@ -13,6 +13,7 @@ use windows::Win32::{
     Foundation::{HWND, RECT},
 };
 
+#[derive(Debug)]
 pub struct ProcessInfo {
     pub process_id: u32,
     pub process_name: String,
@@ -153,4 +154,15 @@ fn get_process_handle(process_id: u32) -> Result<HANDLE, ()> {
 
 fn close_process_handle(process_handle: HANDLE) {
     unsafe { CloseHandle(process_handle) };
+}
+
+pub fn get_process_info(process_id: u32) -> Result<ProcessInfo, ()> {
+    let process_path = get_process_path(process_id)?;
+    let process_name = get_process_name(&process_path)?;
+
+    Ok(ProcessInfo {
+        process_id,
+        process_name,
+        process_path,
+    })
 }

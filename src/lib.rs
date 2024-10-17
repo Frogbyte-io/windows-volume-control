@@ -1,3 +1,4 @@
+use process_api::get_process_info;
 use session::{ApplicationSession, EndPointSession, Session};
 use windows::{
     core::Interface,
@@ -136,6 +137,16 @@ impl AudioController {
                 if pid == 0 {
                     continue;
                 }
+
+                match get_process_info(pid) {
+                    Ok(info) => println!("Process info: {:?}", info),
+                    Err(_err) => {
+                        eprintln!("ERROR: Couldn't get process info for pid {}", pid);
+                        error!("ERROR: Couldn't get process info for pid {}", pid);
+                        continue;
+                    }
+                }
+
                 let process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid).ok();
                 if process.is_none() {
                     eprintln!("ERROR: Couldn't get process information of process id {pid}");
