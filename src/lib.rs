@@ -15,6 +15,8 @@ use windows::{
 use std::process::exit;
 use log::error;
 
+mod process_api;
+
 mod session;
 
 pub struct AudioController {
