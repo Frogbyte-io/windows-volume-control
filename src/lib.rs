@@ -237,13 +237,19 @@ impl AudioController {
 
     }
 
-
+    //returns all session names
     pub unsafe fn get_all_session_names(&self) -> Vec<String> {
         self.sessions.iter().map(|i| i.getName()).collect()
     }
 
+    //returns all sessions with the given name
     pub unsafe fn get_sessions_by_name(&self, name: String) -> Vec<&Box<dyn Session>> {
         self.sessions.iter().filter(|i| i.getName() == name).collect()
+    }
+
+    //returns the first session with the given name
+    pub unsafe fn get_session_by_name(&self, name: String) -> Option<&Box<dyn Session>> {
+        self.sessions.iter().find(|i| i.getName() == name)
     }
 
 }
