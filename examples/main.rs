@@ -9,7 +9,11 @@ fn main() {
         controller.GetDefaultAudioEnpointVolumeControl();
         controller.GetAllProcessSessions();
         let test = controller.get_all_session_names();
-        let master_session = controller.get_session_by_name("master".to_string());
-        println!("{:?}",master_session.unwrap().getVolume());
+        let master_session = controller.get_sessions_by_name("master".to_string());
+        if let Some(session) = master_session.first() {
+            println!("{:?}", session.getVolume());
+        } else {
+            println!("No master session found");
+        }
     }
 }
