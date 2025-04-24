@@ -1,5 +1,5 @@
 use process_api::get_process_info;
-use session::{ApplicationSession, EndPointSession, Session};
+use session::{ApplicationSession, EndPointSession, Session, SystemSoundSession};
 use windows::{
     core::Interface,
     Win32::{
@@ -199,34 +199,27 @@ impl AudioController {
                 }
             };
 
-        if !self.default_device.is_none() {
-            let simple_audio_volume: IAudioEndpointVolume = self
-                .default_device
-                .clone()
-                .unwrap()
+        if let Some(device) = self.default_device.clone() {
+            let simple_audio_volume: IAudioEndpointVolume = device
                 .Activate(CLSCTX_ALL, None)
                 .unwrap_or_else(|err| {
                     eprintln!("ERROR: Couldn't get Endpoint volume control: {err}");
                     exit(1);
                 });
 
-
             self.sessions.push(Box::new(EndPointSession::new(
                 simple_audio_volume,
                 "master".to_string(),
-            )));    
+            )));
         }
 
-        if !self.default_input_device.is_none() {
-            let simple_mic_volume: IAudioEndpointVolume = self
-            .default_input_device
-            .clone()
-            .unwrap()
-            .Activate(CLSCTX_ALL, None)
-            .unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't get Endpoint volume control: {err}");
-                exit(1);
-            });
+        if let Some(device) = self.default_input_device.clone() {
+            let simple_mic_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .unwrap_or_else(|err| {
+                    eprintln!("ERROR: Couldn't get Endpoint volume control: {err}");
+                    exit(1);
+                });
 
             self.sessions.push(Box::new(EndPointSession::new(
                 simple_mic_volume,
@@ -234,7 +227,53 @@ impl AudioController {
             )));
         }
 
+        if let Some(device) = self.default_device.clone() {
+            let simple_system_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .unwrap_or_else(|err| {
+                    eprintln!("ERROR: Couldn't get Endpoint volume control for system sounds: {err}");
+                    exit(1);
+                });
 
+            self.sessions.push(Box::new(EndPointSession::new(
+                simple_system_volume,
+                "system_sounds".to_string(),
+            )));
+        }
+    }
+
+    pub unsafe fn GetSystemSoundSession(&mut self) {
+        if self.imm_device_enumerator.is_none() {
+            eprintln!("ERROR: Function called before creating enumerator");
+            error!("ERROR: Function called before creating enumerator");
+            return;
+        }
+
+        let system_device = match self.imm_device_enumerator
+            .clone()
+            .unwrap()
+            .GetDefaultAudioEndpoint(eRender, eMultimedia)
+        {
+            Ok(device) => Some(device),
+            Err(err) => {
+                eprintln!("ERROR: Couldn't get Default audio output endpoint {err}");
+                None
+            }
+        };
+
+        if let Some(device) = system_device {
+            let simple_audio_volume: IAudioEndpointVolume = device
+                .Activate(CLSCTX_ALL, None)
+                .unwrap_or_else(|err| {
+                    eprintln!("ERROR: Couldn't get Endpoint volume control: {err}");
+                    exit(1);
+                });
+
+            self.sessions.push(Box::new(SystemSoundSession::new(
+                simple_audio_volume,
+                "system_sounds".to_string(),
+            )));
+        }
     }
 
     //returns all session names
