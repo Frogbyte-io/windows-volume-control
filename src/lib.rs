@@ -63,6 +63,8 @@ pub struct AudioController {
     default_input_device: Option<IMMDevice>,
     imm_device_enumerator: Option<IMMDeviceEnumerator>,
     sessions: Vec<Box<dyn Session>>,
+    default_output_id: Option<String>,
+    default_input_id: Option<String>,
 }
 
 pub enum CoinitMode {
@@ -90,6 +92,8 @@ impl AudioController {
             default_input_device: None,
             imm_device_enumerator: None,
             sessions: vec![],
+            default_output_id: None,
+            default_input_id: None,
         }
     }
 
@@ -213,6 +217,7 @@ impl AudioController {
             return;
         }
 
+        // Get Default Output Device
         self.default_device = match self.imm_device_enumerator
             .clone()
             .unwrap()
@@ -225,6 +230,7 @@ impl AudioController {
                 }
             };
 
+        // Get Default Input Device
         self.default_input_device = match self.imm_device_enumerator
             .clone()
             .unwrap()
@@ -237,42 +243,51 @@ impl AudioController {
                 }
             };
 
-        if !self.default_device.is_none() {
-            let simple_audio_volume: IAudioEndpointVolume = self
-                .default_device
-                .clone()
-                .unwrap()
-                .Activate(CLSCTX_ALL, None)
-                .unwrap_or_else(|err| {
-                    eprintln!("ERROR: Couldn't get Endpoint volume control: {err}");
-                    exit(1);
-                });
+        // Process Default Output Device
+        if let Some(ref device) = self.default_device {
+            let device_id_str = device.GetId().ok().and_then(|id| id.to_string().ok());
+            self.default_output_id = device_id_str.clone(); // Store the ID
 
+            let endpoint_volume: IAudioEndpointVolume = match device.Activate(CLSCTX_ALL, None) {
+                Ok(volume) => volume,
+                Err(err) => {
+                    eprintln!("ERROR: Couldn't activate Endpoint volume control for default output: {err}");
+                    error!("ERROR: Couldn't activate Endpoint volume control for default output: {}", err);
+                    return; // Exit if activation fails
+                }
+            };
 
+            let friendly_name = get_device_friendly_name(device, "Default Output");
+            let session_name = format!("output: {} (default_output)", friendly_name);
+            
             self.sessions.push(Box::new(EndPointSession::new(
-                simple_audio_volume,
-                "master".to_string(),
+                endpoint_volume,
+                session_name,
             )));    
         }
 
-        if !self.default_input_device.is_none() {
-            let simple_mic_volume: IAudioEndpointVolume = self
-            .default_input_device
-            .clone()
-            .unwrap()
-            .Activate(CLSCTX_ALL, None)
-            .unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't get Endpoint volume control: {err}");
-                exit(1);
-            });
+        // Process Default Input Device
+        if let Some(ref device) = self.default_input_device {
+            let device_id_str = device.GetId().ok().and_then(|id| id.to_string().ok());
+            self.default_input_id = device_id_str.clone(); // Store the ID
+
+            let endpoint_volume: IAudioEndpointVolume = match device.Activate(CLSCTX_ALL, None) {
+                Ok(volume) => volume,
+                Err(err) => {
+                    eprintln!("ERROR: Couldn't activate Endpoint volume control for default input: {err}");
+                    error!("ERROR: Couldn't activate Endpoint volume control for default input: {}", err);
+                    return; // Exit if activation fails
+                }
+            };
+
+            let friendly_name = get_device_friendly_name(device, "Default Input");
+            let session_name = format!("input: {} (default_input)", friendly_name);
 
             self.sessions.push(Box::new(EndPointSession::new(
-                simple_mic_volume,
-                "mic".to_string(),
+                endpoint_volume,
+                session_name,
             )));
         }
-
-
     }
 
     pub unsafe fn GetAllAudioDevices(&mut self) {
@@ -289,99 +304,69 @@ impl AudioController {
         }
 
         // Get all output (render) devices
-        let output_device_collection: IMMDeviceCollection = self.imm_device_enumerator
-            .as_ref()
-            .unwrap()
-            .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
-            .unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't enumerate audio output endpoints... {err}");
-                error!("ERROR: Couldn't enumerate audio output endpoints... {}", err);
-                exit(1);
-            });
-
-        let output_device_count = output_device_collection.GetCount().unwrap_or_else(|err| {
-            eprintln!("ERROR: Couldn't get output device count... {err}");
-            error!("ERROR: Couldn't get output device count... {}", err);
-            exit(1);
-        });
+        let output_device_collection: IMMDeviceCollection = self.imm_device_enumerator.as_ref().unwrap().EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).unwrap();
+        let output_device_count = output_device_collection.GetCount().unwrap();
 
         for device_index in 0..output_device_count {
-            let device: IMMDevice = output_device_collection.Item(device_index).unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't get output device at index {device_index}... {err}");
-                error!("ERROR: Couldn't get output device at index {}... {}", device_index, err);
-                exit(1);
-            });
+            if let Ok(device) = output_device_collection.Item(device_index) {
+                // Check if this device is the default output device
+                let is_default = if let Some(ref default_id) = self.default_output_id {
+                    device.GetId().ok().and_then(|id| id.to_string().ok()) == Some(default_id.clone())
+                } else {
+                    false
+                };
 
-            // Get device properties to get the friendly name
-            let property_store = device.OpenPropertyStore(STGM_READ).unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't open property store for output device... {err}");
-                error!("ERROR: Couldn't open property store for output device... {}", err);
-                exit(1);
-            });
+                if is_default {
+                    continue; // Skip default device, already added
+                }
 
-            // Get a simple output device name that's better than just an ID
-            let device_name = get_device_friendly_name(&device, "Unknown Output Device");
+                // Get device friendly name
+                let friendly_name = get_device_friendly_name(&device, "Unknown Output Device");
 
-            // Create endpoint volume controller for this device
-            let endpoint_volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't get Endpoint volume control for output device: {err}");
-                error!("ERROR: Couldn't get Endpoint volume control for output device: {}", err);
-                exit(1);
-            });
-
-            // Add to sessions with "output: " prefix
-            self.sessions.push(Box::new(EndPointSession::new(
-                endpoint_volume,
-                format!("output: {}", device_name),
-            )));
+                // Create endpoint volume controller for this device
+                if let Ok(endpoint_volume) = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) {
+                    self.sessions.push(Box::new(EndPointSession::new(
+                        endpoint_volume,
+                        format!("output: {}", friendly_name),
+                    )));
+                } else {
+                     eprintln!("ERROR: Couldn't activate Endpoint volume for output device: {}", friendly_name);
+                     error!("ERROR: Couldn't activate Endpoint volume for output device: {}", friendly_name);
+                }
+            }
         }
 
         // Get all input (capture) devices
-        let input_device_collection: IMMDeviceCollection = self.imm_device_enumerator
-            .as_ref()
-            .unwrap()
-            .EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)
-            .unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't enumerate audio input endpoints... {err}");
-                error!("ERROR: Couldn't enumerate audio input endpoints... {}", err);
-                exit(1);
-            });
-
-        let input_device_count = input_device_collection.GetCount().unwrap_or_else(|err| {
-            eprintln!("ERROR: Couldn't get input device count... {err}");
-            error!("ERROR: Couldn't get input device count... {}", err);
-            exit(1);
-        });
+        let input_device_collection: IMMDeviceCollection = self.imm_device_enumerator.as_ref().unwrap().EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE).unwrap();
+        let input_device_count = input_device_collection.GetCount().unwrap();
 
         for device_index in 0..input_device_count {
-            let device: IMMDevice = input_device_collection.Item(device_index).unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't get input device at index {device_index}... {err}");
-                error!("ERROR: Couldn't get input device at index {}... {}", device_index, err);
-                exit(1);
-            });
+             if let Ok(device) = input_device_collection.Item(device_index) {
+                // Check if this device is the default input device
+                let is_default = if let Some(ref default_id) = self.default_input_id {
+                    device.GetId().ok().and_then(|id| id.to_string().ok()) == Some(default_id.clone())
+                } else {
+                    false
+                };
 
-            // Get device properties to get the friendly name
-            let property_store = device.OpenPropertyStore(STGM_READ).unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't open property store for input device... {err}");
-                error!("ERROR: Couldn't open property store for input device... {}", err);
-                exit(1);
-            });
+                if is_default {
+                    continue; // Skip default device, already added
+                }
 
-            // Get a simple input device name that's better than just an ID
-            let device_name = get_device_friendly_name(&device, "Unknown Input Device");
+                // Get device friendly name
+                let friendly_name = get_device_friendly_name(&device, "Unknown Input Device");
 
-            // Create endpoint volume controller for this device
-            let endpoint_volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).unwrap_or_else(|err| {
-                eprintln!("ERROR: Couldn't get Endpoint volume control for input device: {err}");
-                error!("ERROR: Couldn't get Endpoint volume control for input device: {}", err);
-                exit(1);
-            });
-
-            // Add to sessions with "input: " prefix
-            self.sessions.push(Box::new(EndPointSession::new(
-                endpoint_volume,
-                format!("input: {}", device_name),
-            )));
+                // Create endpoint volume controller for this device
+                if let Ok(endpoint_volume) = device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) {
+                    self.sessions.push(Box::new(EndPointSession::new(
+                        endpoint_volume,
+                        format!("input: {}", friendly_name),
+                    )));
+                } else {
+                     eprintln!("ERROR: Couldn't activate Endpoint volume for input device: {}", friendly_name);
+                     error!("ERROR: Couldn't activate Endpoint volume for input device: {}", friendly_name);
+                }
+            }
         }
     }
 
@@ -394,7 +379,10 @@ impl AudioController {
     pub unsafe fn get_all_device_names(&self) -> Vec<String> {
         self.sessions.iter()
             .map(|i| i.getName())
-            .filter(|name| name.starts_with("input: ") || name.starts_with("output: "))
+            .filter(|name| 
+                name.starts_with("input: ") || 
+                name.starts_with("output: ")
+            )
             .collect()
     }
 
@@ -402,7 +390,9 @@ impl AudioController {
     pub unsafe fn get_output_device_names(&self) -> Vec<String> {
         self.sessions.iter()
             .map(|i| i.getName())
-            .filter(|name| name.starts_with("output: "))
+            .filter(|name| 
+                name.starts_with("output: ")
+            )
             .collect()
     }
 
@@ -410,7 +400,9 @@ impl AudioController {
     pub unsafe fn get_input_device_names(&self) -> Vec<String> {
         self.sessions.iter()
             .map(|i| i.getName())
-            .filter(|name| name.starts_with("input: "))
+            .filter(|name| 
+                name.starts_with("input: ")
+            )
             .collect()
     }
 
