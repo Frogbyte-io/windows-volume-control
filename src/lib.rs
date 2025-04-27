@@ -264,6 +264,14 @@ impl AudioController {
                 endpoint_volume,
                 session_name,
             )));    
+            
+            // For backwards compatibility, also add a new controller with the old "master" name
+            if let Ok(master_endpoint_volume) = device.Activate(CLSCTX_ALL, None) {
+                self.sessions.push(Box::new(EndPointSession::new(
+                    master_endpoint_volume,
+                    "master".to_string(),
+                )));
+            }
         }
 
         // Process Default Input Device
@@ -287,6 +295,14 @@ impl AudioController {
                 endpoint_volume,
                 session_name,
             )));
+            
+            // For backwards compatibility, also add a new controller with the old "mic" name
+            if let Ok(mic_endpoint_volume) = device.Activate(CLSCTX_ALL, None) {
+                self.sessions.push(Box::new(EndPointSession::new(
+                    mic_endpoint_volume,
+                    "mic".to_string(),
+                )));
+            }
         }
     }
 
