@@ -25,11 +25,9 @@ mod session;
 // Helper function to get device friendly name using PropVariantToStringAlloc
 fn get_device_friendly_name(device: &IMMDevice, fallback_name: &str) -> String {
     unsafe {
-        let mut friendly_name = match device.GetId() {
-            Ok(id) => id.to_string().unwrap_or_else(|_| fallback_name.to_string()),
-            Err(_) => fallback_name.to_string(),
-        };
-
+        // Start with the caller-supplied fallback text. We will overwrite it only
+        // if we can obtain a readable property value.
+        let mut friendly_name = fallback_name.to_string();
         if let Ok(property_store) = device.OpenPropertyStore(STGM_READ) {
             if let Ok(prop_variant) = property_store.GetValue(&PKEY_Device_FriendlyName) {
                 // Use PropVariantToStringAlloc which handles conversion and allocation
