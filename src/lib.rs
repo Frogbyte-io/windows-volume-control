@@ -318,7 +318,19 @@ impl AudioController {
         }
 
         // Get all output (render) devices
-        let output_device_collection: IMMDeviceCollection = self.imm_device_enumerator.as_ref().unwrap().EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).unwrap();
+        let output_device_collection: IMMDeviceCollection = match
+            self.imm_device_enumerator
+                .as_ref()
+                .unwrap()
+                .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
+        {
+            Ok(col) => col,
+            Err(err) => {
+                eprintln!("ERROR: Couldn't enumerate output endpoints: {err}");
+                error!("ERROR: Couldn't enumerate output endpoints: {}", err);
+                return;
+            }
+        };
         let output_device_count = output_device_collection.GetCount().unwrap();
 
         for device_index in 0..output_device_count {
