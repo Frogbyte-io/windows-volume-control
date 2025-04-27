@@ -361,8 +361,22 @@ impl AudioController {
         }
 
         // Get all input (capture) devices
-        let input_device_collection: IMMDeviceCollection = self.imm_device_enumerator.as_ref().unwrap().EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE).unwrap();
-        let input_device_count = input_device_collection.GetCount().unwrap();
+        let input_device_collection: IMMDeviceCollection = match self.imm_device_enumerator.as_ref().unwrap().EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE) {
+            Ok(col) => col,
+            Err(err) => {
+                eprintln!("ERROR: Couldn't enumerate input endpoints: {err}");
+                error!("ERROR: Couldn't enumerate input endpoints: {}", err);
+                return;
+            }
+        };
+        let input_device_count = match input_device_collection.GetCount() {
+            Ok(count) => count,
+            Err(err) => {
+                eprintln!("ERROR: Couldn't get input device count: {err}");
+                error!("ERROR: Couldn't get input device count: {}", err);
+                return;
+            }
+        };
 
         for device_index in 0..input_device_count {
              if let Ok(device) = input_device_collection.Item(device_index) {
