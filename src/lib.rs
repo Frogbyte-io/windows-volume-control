@@ -204,8 +204,6 @@ impl AudioController {
             }
         }
     
-        // Uninitialize COM
-        CoUninitialize();
     }
 
     pub unsafe fn GetDefaultAudioEnpointVolumeControl(&mut self) {
