@@ -6,11 +6,9 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, MAX_PATH};
 use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
 };
+use windows::Win32::Globalization::GetUserDefaultUILanguage;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-};
-use windows::Win32::{
-    Foundation::{HWND, RECT},
 };
 
 #[derive(Debug)]
@@ -105,8 +103,11 @@ fn get_file_description(process_path: &Path) -> Result<String, ()> {
         return Err(());
     }
 
-    let lang: &[LangCodePage] =
-        unsafe { std::slice::from_raw_parts(lang_ptr as *const LangCodePage, 1) };
+    // len is in bytes for the translation array; compute number of entries
+    let lang_count = (len as usize) / std::mem::size_of::<LangCodePage>();
+    let lang: &[LangCodePage] = unsafe {
+        std::slice::from_raw_parts(lang_ptr as *const LangCodePage, lang_count)
+    };
 
     if lang.is_empty() {
         return Err(());
@@ -114,34 +115,61 @@ fn get_file_description(process_path: &Path) -> Result<String, ()> {
 
     let mut query_len: u32 = 0;
 
-    let lang = lang.get(0).unwrap();
-    let lang_code = format!(
-        "\\StringFileInfo\\{:04x}{:04x}\\FileDescription",
-        lang.w_language, lang.w_code_page
+    // Prefer: exact UI language -> same primary language -> en-US -> first
+    let user_lang = unsafe { GetUserDefaultUILanguage() } as u16;
+    let user_primary = user_lang & 0x03FF;
+
+    let selected = lang
+        .iter()
+        .find(|l| l.w_language == user_lang)
+        .or_else(|| lang.iter().find(|l| (l.w_language & 0x03FF) == user_primary))
+        .or_else(|| lang.iter().find(|l| l.w_language == 0x0409))
+        .unwrap_or(&lang[0]);
+    let subblock = format!(
+        "\\\\StringFileInfo\\\\{:04x}{:04x}\\\\FileDescription",
+        selected.w_language, selected.w_code_page
     );
-    let lang_code = PCWSTR(HSTRING::from(&lang_code).as_wide().as_ptr());
+    // Keep the HSTRING alive while calling VerQueryValueW
+    let subblock_h: HSTRING = subblock.into();
+    let subblock_pcw = PCWSTR(subblock_h.as_wide().as_ptr());
 
     let mut file_description_ptr = std::ptr::null_mut();
 
-    let file_description_query_success = unsafe {
+    let mut file_description_query_success = unsafe {
         VerQueryValueW(
             file_version_info.as_ptr().cast(),
-            lang_code,
+            subblock_pcw,
             &mut file_description_ptr,
             &mut query_len,
         )
     };
 
+    // Fallback to US-English (0409) and Unicode codepage (04B0) if the specific translation fails
+    if !file_description_query_success.as_bool() {
+        let fallback_subblock = HSTRING::from("\\\\StringFileInfo\\\\040904b0\\\\FileDescription");
+        let fallback_pcw = PCWSTR(fallback_subblock.as_wide().as_ptr());
+        file_description_query_success = unsafe {
+            VerQueryValueW(
+                file_version_info.as_ptr().cast(),
+                fallback_pcw,
+                &mut file_description_ptr,
+                &mut query_len,
+            )
+        };
+    }
+
     if !file_description_query_success.as_bool() {
         return Err(());
     }
 
-    let file_description =
-        unsafe { std::slice::from_raw_parts(file_description_ptr.cast(), query_len as usize) };
-    let file_description = String::from_utf16_lossy(file_description);
-    let file_description = file_description.trim_matches(char::from(0)).to_owned();
+    // file_description_ptr is an LPWSTR to a null-terminated UTF-16 string. Let Windows convert it.
+    let description = unsafe {
+        PWSTR(file_description_ptr as *mut u16)
+            .to_string()
+            .map_err(|_| ())?
+    };
 
-    Ok(file_description)
+    Ok(description)
 }
 
 fn get_process_handle(process_id: u32) -> Result<HANDLE, ()> {
