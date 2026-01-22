@@ -31,9 +31,7 @@ impl SharedState {
             .unwrap()
             .contains(session_name)
     }
-}
 
-impl SharedState {
     fn should_ignore_restore(&self, session_name: &str) -> bool {
         let now = Instant::now();
 
@@ -78,7 +76,6 @@ impl VolumeMonitor {
             },
         }
     }
-
     pub fn is_polling_active(&self) -> bool {
         self.state.polling_active.load(Ordering::Relaxed)
     }
@@ -96,18 +93,6 @@ impl VolumeMonitor {
         let mut mapped = self.state.mapped_sessions.lock().unwrap();
         mapped.clear();
         mapped.extend(session_names);
-    }
-
-    pub fn register_session_callback(
-        &mut self,
-        _controller: &mut AudioController,
-        session_name: &str,
-        _initial_volume: f32,
-    ) -> windows::core::Result<()> {
-        // Application sessions don't provide callbacks, and endpoint callbacks require COM
-        // interfaces that are not `Send`. Dot X enforces expected volumes via polling.
-        let _ = session_name;
-        Ok(())
     }
 
     pub fn unregister_all_callbacks(
@@ -173,10 +158,6 @@ impl VolumeMonitor {
 
     pub fn should_ignore_restore(&self, session_name: &str) -> bool {
         self.state.should_ignore_restore(session_name)
-    }
-
-    pub fn take_due_endpoint_restores(&self) -> Vec<String> {
-        Vec::new()
     }
 }
 
