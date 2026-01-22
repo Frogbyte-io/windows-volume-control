@@ -19,8 +19,11 @@ use log::error;
 mod process_api;
 
 mod session;
+mod volume_monitor;
 
 const FORM_FACTOR_SPDIF: i32 = 8;
+
+pub use volume_monitor::VolumeMonitor;
 
 // Helper function to get device friendly name using PropVariantToStringAlloc
 fn get_device_friendly_name(device: &IMMDevice, fallback_name: &str) -> String {
