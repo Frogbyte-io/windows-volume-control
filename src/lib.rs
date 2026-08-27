@@ -1,7 +1,7 @@
 use process_api::get_process_info;
 use session::{ApplicationSession, EndPointSession, Session};
 use windows::{
-    core::Interface,
+    core::ComInterface,
     Win32::{
         Media::Audio::{
             eCapture, eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IAudioSessionControl, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionManager2, IMMDevice, IMMDeviceCollection, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator, PKEY_AudioEndpoint_FormFactor, DEVICE_STATE_ACTIVE
