@@ -20,7 +20,19 @@ mod process_api;
 
 mod session;
 
+// EndpointFormFactor values for digital-only outputs
+const FORM_FACTOR_UNKNOWN_DIGITAL_PASSTHROUGH: i32 = 7;
 const FORM_FACTOR_SPDIF: i32 = 8;
+
+// Helper function to get the device ID, freeing the COM-allocated string
+fn get_device_id(device: &IMMDevice) -> Option<String> {
+    unsafe {
+        let id = device.GetId().ok()?;
+        let id_str = id.to_string().ok();
+        CoTaskMemFree(Some(id.as_ptr().cast()));
+        id_str
+    }
+}
 
 // Helper function to get device friendly name using PropVariantToStringAlloc
 fn get_device_friendly_name(device: &IMMDevice, fallback_name: &str) -> String {
@@ -161,18 +173,11 @@ impl AudioController {
             };
 
             // Get device ID for error reporting
-            let device_id = match device.GetId() {
-                Ok(id) => match id.to_string() {
-                    Ok(id_str) => id_str,
-                    Err(_) => {
-                        eprintln!("WARNING: Skipping device {} - couldn't convert device ID to string", device_index);
-                        error!("WARNING: Skipping device {} - couldn't convert device ID to string", device_index);
-                        continue;
-                    }
-                },
-                Err(err) => {
-                    eprintln!("WARNING: Skipping device {} - couldn't get device ID: {}", device_index, err);
-                    error!("WARNING: Skipping device {} - couldn't get device ID: {}", device_index, err);
+            let device_id = match get_device_id(&device) {
+                Some(id) => id,
+                None => {
+                    eprintln!("WARNING: Skipping device {} - couldn't get device ID", device_index);
+                    error!("WARNING: Skipping device {} - couldn't get device ID", device_index);
                     continue;
                 }
             };
@@ -190,9 +195,9 @@ impl AudioController {
 
             let device_name = get_device_friendly_name(&device, &format!("Device {}", device_index));
 
-            // Skip SPDIF/digital outputs if detected by form factor
+            // Skip SPDIF/digital passthrough outputs if detected by form factor
             if let Some(form_factor) = get_device_form_factor(&property_store) {
-                if form_factor == FORM_FACTOR_SPDIF {
+                if matches!(form_factor, FORM_FACTOR_SPDIF | FORM_FACTOR_UNKNOWN_DIGITAL_PASSTHROUGH) {
                     continue;
                 }
             }
@@ -311,7 +316,7 @@ impl AudioController {
 
         // Process Default Output Device
         if let Some(ref device) = self.default_device {
-            let device_id_str = device.GetId().ok().and_then(|id| id.to_string().ok());
+            let device_id_str = get_device_id(device);
             self.default_output_id = device_id_str.clone(); // Store the ID
 
             let endpoint_volume: IAudioEndpointVolume = match device.Activate(CLSCTX_ALL, None) {
@@ -342,7 +347,7 @@ impl AudioController {
 
         // Process Default Input Device
         if let Some(ref device) = self.default_input_device {
-            let device_id_str = device.GetId().ok().and_then(|id| id.to_string().ok());
+            let device_id_str = get_device_id(device);
             self.default_input_id = device_id_str.clone(); // Store the ID
 
             let endpoint_volume: IAudioEndpointVolume = match device.Activate(CLSCTX_ALL, None) {
@@ -405,7 +410,7 @@ impl AudioController {
             if let Ok(device) = output_device_collection.Item(device_index) {
                 // Check if this device is the default output device
                 let is_default = if let Some(ref default_id) = self.default_output_id {
-                    device.GetId().ok().and_then(|id| id.to_string().ok()) == Some(default_id.clone())
+                    get_device_id(&device).as_ref() == Some(default_id)
                 } else {
                     false
                 };
@@ -452,7 +457,7 @@ impl AudioController {
              if let Ok(device) = input_device_collection.Item(device_index) {
                 // Check if this device is the default input device
                 let is_default = if let Some(ref default_id) = self.default_input_id {
-                    device.GetId().ok().and_then(|id| id.to_string().ok()) == Some(default_id.clone())
+                    get_device_id(&device).as_ref() == Some(default_id)
                 } else {
                     false
                 };
